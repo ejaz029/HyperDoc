@@ -188,3 +188,41 @@ button:hover {
   text-align: center;
   color: #6b7280;
 }
+
+.upload-panel {
+  background: white;
+  border-radius: 10px;
+  padding: 24px 28px;
+  margin-bottom: 24px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.06);
+}
+
+.upload-panel h2 {
+  margin: 0 0 6px;
+}
+
+.upload-panel p {
+  margin: 0 0 18px;
+  color: #6b7280;
+}
+
+.upload-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.upload-row input {
+  flex: 1;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.success {
+  color: #15803d;
+  margin-bottom: 20px;
+  font-weight: 600;
+}
