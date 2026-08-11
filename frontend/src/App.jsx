@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import ReactMarkdown from "react-markdown";
 import "./App.css";
 
 const API = "http://127.0.0.1:8000";
@@ -9,8 +10,10 @@ function App() {
   const [file, setFile] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [reviewing, setReviewing] = useState(null);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [agentResult, setAgentResult] = useState(null);
 
   const loadFindings = async () => {
     setLoading(true);
@@ -18,9 +21,7 @@ function App() {
     setMessage("");
 
     try {
-      const response = await fetch(
-        `${API}/findings/${documentId}`
-      );
+      const response = await fetch(`${API}/findings/${documentId}`);
 
       if (!response.ok) {
         throw new Error("Failed to load findings");
@@ -39,9 +40,7 @@ function App() {
     setError("");
 
     try {
-      const response = await fetch(
-        `${API}/findings/${id}`
-      );
+      const response = await fetch(`${API}/findings/${id}`);
 
       if (!response.ok) {
         throw new Error("Failed to load findings");
@@ -64,6 +63,7 @@ function App() {
     setUploading(true);
     setError("");
     setMessage("");
+    setAgentResult(null);
 
     try {
       const formData = new FormData();
@@ -119,6 +119,8 @@ function App() {
         );
       }
 
+      setAgentResult(agentData);
+
       setMessage(
         `Analysis complete. ${agentData.finding_ids.length} finding(s) require review.`
       );
@@ -132,6 +134,10 @@ function App() {
   };
 
   const reviewFinding = async (id, decision) => {
+    setReviewing(id);
+    setError("");
+    setMessage("");
+
     try {
       const response = await fetch(
         `${API}/findings/${id}/review`,
@@ -140,7 +146,9 @@ function App() {
           headers: {
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ decision }),
+          body: JSON.stringify({
+            decision,
+          }),
         }
       );
 
@@ -148,9 +156,15 @@ function App() {
         throw new Error("Failed to review finding");
       }
 
+      setMessage(
+        `Finding #${id} marked as ${decision}.`
+      );
+
       await loadFindings();
     } catch (err) {
       setError(err.message);
+    } finally {
+      setReviewing(null);
     }
   };
 
@@ -168,6 +182,7 @@ function App() {
       <main className="container">
         <section className="upload-panel">
           <h2>Upload Document</h2>
+
           <p>
             Upload a PDF, DOCX, or TXT document for analysis.
           </p>
@@ -176,8 +191,8 @@ function App() {
             <input
               type="file"
               accept=".pdf,.docx,.txt"
-              onChange={(e) =>
-                setFile(e.target.files[0] || null)
+              onChange={(event) =>
+                setFile(event.target.files[0] || null)
               }
             />
 
@@ -199,6 +214,156 @@ function App() {
           </p>
         )}
 
+        {error && (
+          <p className="error">
+            {error}
+          </p>
+        )}
+
+        {agentResult && (
+          <section className="panel analysis-panel">
+            <div className="panel-header">
+              <div>
+                <h2>Analysis Summary</h2>
+
+                <p>
+                  Document agent execution results.
+                </p>
+              </div>
+
+              <span
+                className={`status ${agentResult.status}`}
+              >
+                {agentResult.status}
+              </span>
+            </div>
+
+            <div className="metrics">
+              <div className="metric">
+                <span>Run ID</span>
+                <strong>
+                  #{agentResult.run_id}
+                </strong>
+              </div>
+
+              <div className="metric">
+                <span>Facts</span>
+                <strong>
+                  {agentResult.extracted_fact_ids?.length ?? 0}
+                </strong>
+              </div>
+
+              <div className="metric">
+                <span>Findings</span>
+                <strong>
+                  {agentResult.finding_ids?.length ?? 0}
+                </strong>
+              </div>
+
+              <div className="metric">
+                <span>Duration</span>
+                <strong>
+                  {agentResult.total_duration_seconds}s
+                </strong>
+              </div>
+
+              <div className="metric">
+                <span>LLM Tokens</span>
+                <strong>
+                  {agentResult.llm_usage?.total_tokens ?? 0}
+                </strong>
+              </div>
+            </div>
+
+            {agentResult.stage_timings && (
+              <div className="pipeline">
+                <h3>Pipeline Stages</h3>
+
+                <div className="stage-list">
+                  {Object.entries(
+                    agentResult.stage_timings
+                  ).map(([stage, duration]) => (
+                    <div
+                      className="stage"
+                      key={stage}
+                    >
+                      <span>
+                        {stage.replaceAll("_", " ")}
+                      </span>
+
+                      <strong>
+                        {duration}s
+                      </strong>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {agentResult.extracted_facts?.length > 0 && (
+              <div className="facts-section">
+                <h3>Extracted Facts</h3>
+
+                <div className="facts-list">
+                  {agentResult.extracted_facts.map(
+                    (fact) => (
+                      <div
+                        className="fact-card"
+                        key={fact.id}
+                      >
+                        <div className="fact-main">
+                          <span className="fact-name">
+                            {fact.fact}
+                          </span>
+
+                          <strong className="fact-value">
+                            {fact.value}
+                          </strong>
+                        </div>
+
+                        <div className="fact-source">
+                          <span>
+                            Document {fact.document_id}
+                          </span>
+
+                          <span>
+                            Chunk {fact.chunk_id}
+                          </span>
+
+                          {fact.page_number !== null &&
+                            fact.page_number !== undefined && (
+                              <span>
+                                Page {fact.page_number}
+                              </span>
+                            )}
+
+                          {fact.section && (
+                            <span>
+                              Section: {fact.section}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  )}
+                </div>
+              </div>
+            )}
+
+            {agentResult.draft && (
+              <div className="draft">
+                <h3>Generated Draft</h3>
+
+                <div className="draft-content">
+                  <ReactMarkdown>
+                    {agentResult.draft}
+                  </ReactMarkdown>
+                </div>
+              </div>
+            )}
+          </section>
+        )}
+
         <div className="toolbar">
           <div className="input-group">
             <label htmlFor="document-id">
@@ -218,33 +383,36 @@ function App() {
           <button
             type="button"
             onClick={loadFindings}
+            disabled={loading}
           >
-            Load Findings
+            {loading
+              ? "Loading..."
+              : "Load Findings"}
           </button>
         </div>
 
-        <section className="panel">
+        <section className="panel findings-panel">
           <div className="panel-header">
             <div>
               <h2>Review Findings</h2>
+
               <p>
                 AI-detected conflicts requiring human review.
               </p>
             </div>
 
             <span className="count">
-              {findings.length} findings
+              {findings.length}{" "}
+              {findings.length === 1
+                ? "finding"
+                : "findings"}
             </span>
           </div>
 
           {loading && (
-            <p>Loading findings...</p>
-          )}
-
-          {error && (
-            <p className="error">
-              {error}
-            </p>
+            <div className="empty">
+              Loading findings...
+            </div>
           )}
 
           {!loading &&
@@ -255,64 +423,79 @@ function App() {
               </div>
             )}
 
-          {findings.map((finding) => (
-            <div
-              className="finding"
-              key={finding.id}
-            >
-              <div className="finding-content">
-                <div className="top-row">
-                  <span className="badge">
-                    {finding.type}
-                  </span>
+          {!loading &&
+            findings.map((finding) => (
+              <article
+                className="finding"
+                key={finding.id}
+              >
+                <div className="finding-content">
+                  <div className="finding-header">
+                    <div className="top-row">
+                      <span className="badge conflict">
+                        {finding.type || "CONFLICT"}
+                      </span>
 
-                  <span
-                    className={`status ${finding.status}`}
-                  >
-                    {finding.status}
-                  </span>
+                      <span
+                        className={`status ${finding.status}`}
+                      >
+                        {finding.status}
+                      </span>
+                    </div>
+
+                    <span className="finding-number">
+                      Finding #{finding.id}
+                    </span>
+                  </div>
+
+                  <div className="finding-description">
+                    <span className="finding-label">
+                      Conflict
+                    </span>
+
+                    <h3>
+                      {finding.description}
+                    </h3>
+                  </div>
                 </div>
 
-                <h3>
-                  {finding.description}
-                </h3>
+                {finding.status === "pending" && (
+                  <div className="actions">
+                    <button
+                      type="button"
+                      className="accept"
+                      disabled={reviewing === finding.id}
+                      onClick={() =>
+                        reviewFinding(
+                          finding.id,
+                          "accepted"
+                        )
+                      }
+                    >
+                      {reviewing === finding.id
+                        ? "Saving..."
+                        : "Accept"}
+                    </button>
 
-                <p className="finding-id">
-                  Finding #{finding.id}
-                </p>
-              </div>
-
-              {finding.status === "pending" && (
-                <div className="actions">
-                  <button
-                    type="button"
-                    className="accept"
-                    onClick={() =>
-                      reviewFinding(
-                        finding.id,
-                        "accepted"
-                      )
-                    }
-                  >
-                    Accept
-                  </button>
-
-                  <button
-                    type="button"
-                    className="reject"
-                    onClick={() =>
-                      reviewFinding(
-                        finding.id,
-                        "rejected"
-                      )
-                    }
-                  >
-                    Reject
-                  </button>
-                </div>
-              )}
-            </div>
-          ))}
+                    <button
+                      type="button"
+                      className="reject"
+                      disabled={reviewing === finding.id}
+                      onClick={() =>
+                        reviewFinding(
+                          finding.id,
+                          "rejected"
+                        )
+                      }
+                    >
+                      {reviewing === finding.id
+                        ? "Saving..."
+                        : "Reject"}
+                    </button>
+                  </div>
+                )}
+              </article>
+            ))}
         </section>
       </main>
     </div>
