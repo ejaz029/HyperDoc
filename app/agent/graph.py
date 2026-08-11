@@ -1,3 +1,5 @@
+import time
+
 from langgraph.graph import END, START, StateGraph
 
 from app.agent.checkpoint import save_checkpoint
@@ -14,14 +16,27 @@ STAGES = [
 ]
 
 
-def checkpoint_node(stage: str, state: AgentState) -> AgentState:
+def save_stage_checkpoint(
+    stage: str,
+    state: AgentState,
+    started_at: float,
+    status: str = "completed",
+) -> AgentState:
     db = SessionLocal()
 
     try:
+        elapsed = round(time.perf_counter() - started_at, 4)
+
+        timings = {
+            **state.get("stage_timings", {}),
+            stage: elapsed,
+        }
+
         updated = {
             **state,
             "current_stage": stage,
-            "status": "completed",
+            "status": status,
+            "stage_timings": timings,
         }
 
         save_checkpoint(
@@ -29,7 +44,7 @@ def checkpoint_node(stage: str, state: AgentState) -> AgentState:
             state["run_id"],
             updated,
             stage=stage,
-            status="completed",
+            status=status,
         )
 
         return updated
@@ -39,10 +54,17 @@ def checkpoint_node(stage: str, state: AgentState) -> AgentState:
 
 
 def ingest_node(state: AgentState) -> AgentState:
-    return checkpoint_node("ingest", state)
+    started_at = time.perf_counter()
+    return save_stage_checkpoint(
+        "ingest",
+        state,
+        started_at,
+    )
 
 
 def extract_node(state: AgentState) -> AgentState:
+    started_at = time.perf_counter()
+
     from app.db.models import DocumentChunk
     from app.services.extraction import (
         extract_facts,
@@ -55,6 +77,12 @@ def extract_node(state: AgentState) -> AgentState:
         document_ids = state.get("document_ids", [])
         extracted_fact_ids = []
         attempts = state.get("extraction_attempts", 0) + 1
+
+        llm_usage = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+        }
 
         for document_id in document_ids:
             chunks = (
@@ -83,12 +111,37 @@ def extract_node(state: AgentState) -> AgentState:
                     for fact in saved
                 )
 
+                usage = result.usage
+
+                llm_usage["input_tokens"] += usage.get(
+                    "input_tokens",
+                    0,
+                )
+                llm_usage["output_tokens"] += usage.get(
+                    "output_tokens",
+                    0,
+                )
+                llm_usage["total_tokens"] += usage.get(
+                    "total_tokens",
+                    0,
+                )
+
+        elapsed = round(
+            time.perf_counter() - started_at,
+            4,
+        )
+
         updated = {
             **state,
             "current_stage": "extract",
             "status": "completed",
             "extracted_fact_ids": extracted_fact_ids,
             "extraction_attempts": attempts,
+            "llm_usage": llm_usage,
+            "stage_timings": {
+                **state.get("stage_timings", {}),
+                "extract": elapsed,
+            },
         }
 
         save_checkpoint(
@@ -104,6 +157,7 @@ def extract_node(state: AgentState) -> AgentState:
     finally:
         db.close()
 
+
 def route_after_extract(state: AgentState):
     fact_ids = state.get("extracted_fact_ids", [])
     attempts = state.get("extraction_attempts", 0)
@@ -116,7 +170,10 @@ def route_after_extract(state: AgentState):
 
     return "escalate_review"
 
+
 def conflict_check_node(state: AgentState) -> AgentState:
+    started_at = time.perf_counter()
+
     from app.services.conflicts import find_conflicts
     from app.services.findings import save_conflicts
 
@@ -143,11 +200,20 @@ def conflict_check_node(state: AgentState) -> AgentState:
                 for finding in findings
             )
 
+        elapsed = round(
+            time.perf_counter() - started_at,
+            4,
+        )
+
         updated = {
             **state,
             "current_stage": "conflict_check",
             "status": "completed",
             "finding_ids": finding_ids,
+            "stage_timings": {
+                **state.get("stage_timings", {}),
+                "conflict_check": elapsed,
+            },
         }
 
         save_checkpoint(
@@ -165,31 +231,24 @@ def conflict_check_node(state: AgentState) -> AgentState:
 
 
 def draft_node(state: AgentState) -> AgentState:
-    return checkpoint_node("draft", state)
+    started_at = time.perf_counter()
+
+    return save_stage_checkpoint(
+        "draft",
+        state,
+        started_at,
+    )
 
 
 def review_node(state: AgentState) -> AgentState:
-    db = SessionLocal()
+    started_at = time.perf_counter()
 
-    try:
-        updated = {
-            **state,
-            "current_stage": "review",
-            "status": "waiting_for_review",
-        }
-
-        save_checkpoint(
-            db,
-            state["run_id"],
-            updated,
-            stage="review",
-            status="waiting_for_review",
-        )
-
-        return updated
-
-    finally:
-        db.close()
+    return save_stage_checkpoint(
+        "review",
+        state,
+        started_at,
+        status="waiting_for_review",
+    )
 
 
 def route_start(state: AgentState):
@@ -232,15 +291,17 @@ def build_graph():
     )
 
     graph.add_edge("ingest", "extract")
+
     graph.add_conditional_edges(
-    "extract",
-    route_after_extract,
-    {
-        "conflict_check": "conflict_check",
-        "retry_extract": "extract",
-        "escalate_review": "review",
-    },
+        "extract",
+        route_after_extract,
+        {
+            "conflict_check": "conflict_check",
+            "retry_extract": "extract",
+            "escalate_review": "review",
+        },
     )
+
     graph.add_edge("conflict_check", "draft")
     graph.add_edge("draft", "review")
     graph.add_edge("review", END)
