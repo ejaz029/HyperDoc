@@ -8,6 +8,7 @@ function App() {
   const [documentId, setDocumentId] = useState("4");
   const [findings, setFindings] = useState([]);
   const [file, setFile] = useState(null);
+  const [rulesText, setRulesText] = useState("");
   const [uploading, setUploading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [reviewing, setReviewing] = useState(null);
@@ -96,6 +97,11 @@ function App() {
         `Uploaded ${uploadData.filename}. Running document agent...`
       );
 
+      const rules = rulesText
+        .split("\n")
+        .map((rule) => rule.trim())
+        .filter(Boolean);
+
       const agentResponse = await fetch(
         `${API}/documents/agent/run`,
         {
@@ -105,6 +111,7 @@ function App() {
           },
           body: JSON.stringify({
             document_ids: [id],
+            rules,
           }),
         }
       );
@@ -187,6 +194,30 @@ function App() {
             Upload a PDF, DOCX, or TXT document for analysis.
           </p>
 
+          <div className="rules-section">
+            <label htmlFor="rules">
+              Review Rules / Checklist
+            </label>
+
+            <p className="rules-help">
+              Add one rule per line. The agent will check
+              the uploaded document against these rules.
+            </p>
+
+            <textarea
+              id="rules"
+              value={rulesText}
+              onChange={(event) =>
+                setRulesText(event.target.value)
+              }
+              placeholder={
+                "Payment terms must be Net 30 days.\nThe contract must identify the vendor."
+              }
+              rows={4}
+              disabled={uploading}
+            />
+          </div>
+
           <div className="upload-row">
             <input
               type="file"
@@ -194,6 +225,7 @@ function App() {
               onChange={(event) =>
                 setFile(event.target.files[0] || null)
               }
+              disabled={uploading}
             />
 
             <button
@@ -274,6 +306,29 @@ function App() {
                 </strong>
               </div>
             </div>
+
+            {agentResult.rules?.length > 0 && (
+              <div className="rules-result">
+                <h3>Rules Checked</h3>
+
+                <div className="rules-result-list">
+                  {agentResult.rules.map(
+                    (rule, index) => (
+                      <div
+                        className="rule-result"
+                        key={`${rule}-${index}`}
+                      >
+                        <span className="rule-number">
+                          {index + 1}
+                        </span>
+
+                        <span>{rule}</span>
+                      </div>
+                    )
+                  )}
+                </div>
+              </div>
+            )}
 
             {agentResult.stage_timings && (
               <div className="pipeline">
@@ -397,7 +452,8 @@ function App() {
               <h2>Review Findings</h2>
 
               <p>
-                AI-detected conflicts requiring human review.
+                AI-detected conflicts and rule violations
+                requiring human review.
               </p>
             </div>
 
@@ -432,7 +488,13 @@ function App() {
                 <div className="finding-content">
                   <div className="finding-header">
                     <div className="top-row">
-                      <span className="badge conflict">
+                      <span
+                        className={`badge ${
+                          finding.type === "rule"
+                            ? "rule"
+                            : "conflict"
+                        }`}
+                      >
                         {finding.type || "CONFLICT"}
                       </span>
 
@@ -450,7 +512,9 @@ function App() {
 
                   <div className="finding-description">
                     <span className="finding-label">
-                      Conflict
+                      {finding.type === "rule"
+                        ? "Rule Check"
+                        : "Conflict"}
                     </span>
 
                     <h3>
@@ -464,7 +528,9 @@ function App() {
                     <button
                       type="button"
                       className="accept"
-                      disabled={reviewing === finding.id}
+                      disabled={
+                        reviewing === finding.id
+                      }
                       onClick={() =>
                         reviewFinding(
                           finding.id,
@@ -480,7 +546,9 @@ function App() {
                     <button
                       type="button"
                       className="reject"
-                      disabled={reviewing === finding.id}
+                      disabled={
+                        reviewing === finding.id
+                      }
                       onClick={() =>
                         reviewFinding(
                           finding.id,

@@ -1,108 +1,450 @@
 # HyperDoc
+
 ## Agentic Document Review System
 
-### Overview
-HyperDoc is an agentic document-processing system that extracts structured facts from documents, detects conflicting terms, and routes findings to a human for review.
+HyperDoc is an agentic document-processing system that extracts structured facts from documents, detects conflicting terms, generates a reviewable draft, and routes findings to a human reviewer.
 
-### Formats & Domain Accepted
-- Formats: PDF, DOCX, TXT
-- Domain: vendor contracts, amendments, invoices (synthetic/public test data only)
+The system is designed around a LangGraph execution pipeline with persisted checkpoints, provenance-aware extraction, conflict detection, and a React-based review interface.
 
-### Quickstart
-```bash
-git clone <this-repo>
-cd hyperdoc
-cp .env.example .env
-# add your GROQ_API_KEY to .env
+---
 
-docker compose up -d          # Postgres + pgvector
+## Overview
 
-python -m venv .venv
-.venv\Scripts\activate        # Windows
-pip install -r requirements.txt
+HyperDoc processes documents through the following flow:
 
-uvicorn app.main:app --reload
-```
-Health check: `curl http://127.0.0.1:8000/health`
+```text
+Document Upload
+      ↓
+Parsing & Chunking
+      ↓
+Fact Extraction
+      ↓
+Conflict Detection
+      ↓
+Draft Generation
+      ↓
+Human Review
 
-Frontend:
-```bash
+The system preserves source provenance for extracted facts and records execution metrics such as stage timings and LLM token usage.
+
+Supported Formats & Domain
+Formats
+PDF
+DOCX
+TXT
+Intended Domain
+Vendor contracts
+Contract amendments
+Invoices
+Synthetic/public test data
+Key Features
+Document Processing
+PDF, DOCX, and TXT ingestion
+Document classification
+Page-aware parsing where available
+Chunking with overlap
+Embedding generation
+PostgreSQL + pgvector storage
+Agentic Processing
+LangGraph-based document agent
+Persisted execution checkpoints
+Resume support after interrupted execution
+Concurrent run isolation
+Extraction retry handling
+Stage-level execution timing
+Fact Extraction
+Structured fact extraction using Groq LLM
+Pydantic-validated extraction output
+Source provenance for every extracted fact
+Document and chunk identifiers normalized by application context
+Protection against instructions embedded inside document data
+Conflict Detection
+
+The system groups extracted facts by normalized fact name and detects cases where the same fact has multiple distinct values.
+
+Example:
+
+Payment Terms: Net 30 days
+Payment Terms: Net 60 days
+
+This produces a conflict finding requiring human review.
+
+Draft Generation
+
+The agent generates a structured contract brief containing extracted facts and their source information.
+
+Human Review
+
+Reviewers can:
+
+View detected conflicts
+Inspect the generated draft
+Inspect extracted facts
+View source document/chunk provenance
+Accept findings
+Reject findings
+Execution Metrics
+
+Each agent run records:
+
+Run ID
+Current stage
+Run status
+Extraction attempts
+Stage timings
+Input tokens
+Output tokens
+Total LLM tokens
+Total execution duration
+Architecture
+                         ┌─────────────────┐
+                         │  React + Vite   │
+                         │ Review Frontend │
+                         └────────┬────────┘
+                                  │
+                                  ▼
+                         ┌─────────────────┐
+                         │    FastAPI      │
+                         │      API        │
+                         └────────┬────────┘
+                                  │
+                                  ▼
+                         ┌─────────────────┐
+                         │    LangGraph    │
+                         │  Document Agent │
+                         └────────┬────────┘
+                                  │
+              ┌───────────────────┼───────────────────┐
+              ▼                   ▼                   ▼
+        ┌───────────┐       ┌───────────┐       ┌───────────┐
+        │  Ingest   │──────▶│  Extract  │──────▶│ Conflict  │
+        │           │       │   Facts   │       │   Check   │
+        └───────────┘       └───────────┘       └─────┬─────┘
+                                                       │
+                                                       ▼
+                                                ┌───────────┐
+                                                │   Draft   │
+                                                └─────┬─────┘
+                                                      │
+                                                      ▼
+                                                ┌───────────┐
+                                                │  Review   │
+                                                └───────────┘
+
+                         ┌─────────────────┐
+                         │ PostgreSQL +    │
+                         │    pgvector     │
+                         └─────────────────┘
+Agent Pipeline
+
+The LangGraph agent progresses through:
+
+Ingest
+  ↓
+Extract
+  ↓
+Conflict Check
+  ↓
+Draft
+  ↓
+Review
+
+Execution checkpoints are persisted so an interrupted run can resume from its last completed stage rather than unnecessarily starting over.
+
+The agent also records timing information for each stage.
+
+Example:
+
+{
+  "stage_timings": {
+    "ingest": 0.0,
+    "extract": 2.4041,
+    "conflict_check": 0.0094,
+    "draft": 0.0027,
+    "review": 0.0
+  }
+}
+LLM Usage
+
+The extraction agent uses a Groq-hosted LLM.
+
+LLM usage is captured from the model response metadata and returned as part of the agent result.
+
+Example:
+
+{
+  "llm_usage": {
+    "input_tokens": 265,
+    "output_tokens": 299,
+    "total_tokens": 564
+  }
+}
+
+This makes model usage visible without requiring the frontend to estimate token consumption.
+
+Provenance
+
+Every extracted fact retains source information including:
+
+Document ID
+Chunk ID
+Page number when available
+Section when available
+
+Example:
+
+{
+  "id": 230,
+  "document_id": 72,
+  "chunk_id": 60,
+  "fact": "Vendor",
+  "value": "Acme Supplies",
+  "page_number": null,
+  "section": null
+}
+
+Source metadata is normalized from application context rather than relying on identifiers generated by the LLM.
+
+Prompt Injection Handling
+
+Document content is treated strictly as data during fact extraction.
+
+Instructions contained inside uploaded documents are explicitly treated as document content rather than agent instructions.
+
+The test suite includes a prompt-injection case verifying this behavior.
+
+API
+Upload Document
+POST /documents/upload
+
+Accepts a PDF, DOCX, or TXT file.
+
+Example response:
+
+{
+  "document_id": 72,
+  "filename": "conflict.txt",
+  "document_type": "unknown",
+  "chunks": 1
+}
+Run Document Agent
+POST /documents/agent/run
+
+Request:
+
+{
+  "document_ids": [72]
+}
+
+The response contains the agent run information, extracted facts, findings, generated draft, stage timings, and LLM usage.
+
+Get Findings
+GET /findings/{document_id}
+
+Returns findings detected for the specified document.
+
+Review Finding
+POST /findings/{finding_id}/review
+
+Accept:
+
+{
+  "decision": "accepted"
+}
+
+Reject:
+
+{
+  "decision": "rejected"
+}
+Interactive API Documentation
+
+When the backend is running:
+
+http://127.0.0.1:8000/docs
+Frontend
+
+The frontend is implemented using React and Vite.
+
+The review interface provides:
+
+Document upload
+Agent execution
+Analysis summary
+Run status
+Extracted fact count
+Finding count
+Execution duration
+LLM token usage
+Pipeline stage timings
+Extracted facts
+Source provenance
+Generated draft
+Conflict findings
+Accept / Reject review actions
+
+Start the frontend:
+
 cd frontend
 npm install
 npm run dev
-```
+
 Production build:
-```bash
+
 npm run build
-```
+Quickstart
 
-### Architecture
+Clone the repository:
 
-Document Upload
--> Parsing & Chunking
--> Fact Extraction (Groq LLM)
--> Conflict Detection
--> Finding Creation
--> Human Review
+git clone <this-repo>
+cd hyperdoc
 
+Create the environment file:
 
-### Tech Stack
-- Python 3.11
-- FastAPI
-- PostgreSQL + pgvector
-- SQLAlchemy
-- LangGraph
-- Groq LLM
-- React + Vite
-- Docker
+cp .env.example .env
 
-### API
+Add the required Groq API key:
 
-**Upload Document**
-`POST /documents/upload`
-Accepts a document, creates the document record and chunks.
+GROQ_API_KEY=your_key_here
 
-**Get Findings**
-`GET /findings/{document_id}`
-Returns conflicts detected for a document.
+Start PostgreSQL and pgvector:
 
-**Review Finding**
-`POST /findings/{finding_id}/review`
-```json
-{ "decision": "accepted" }
-```
-or
-```json
-{ "decision": "rejected" }
-```
+docker compose up -d
 
-Full interactive docs when the backend is running: `http://127.0.0.1:8000/docs`
+Create the Python environment:
 
-### Agent Pipeline
-The LangGraph agent progresses through: **Ingest -> Extract -> Conflict Check -> Draft -> Review**.
-Checkpoints are persisted at each stage, so a run can resume from its last completed stage after a crash or manual kill.
+python -m venv .venv
 
-**Verify resumability:**
-```bash
-# start a run, kill it mid-way (Ctrl+C or kill the process), then restart —
-# it resumes from the last persisted checkpoint instead of re-processing from scratch
-```
+Windows:
 
-### Human Review
-AI-detected conflicts are displayed in the React frontend. Reviewers accept or reject individual findings; rejecting one does not discard the rest.
+.venv\Scripts\activate
 
-### Provenance
-Extracted facts retain their document and chunk provenance. Source metadata is normalized from the application context rather than relying on LLM-generated identifiers — this is what keeps every claim traceable to an exact source location, not just plausible-looking.
+Install dependencies:
 
-### Testing
-```bash
+pip install -r requirements.txt
+
+Start the backend:
+
+uvicorn app.main:app --reload
+
+Health check:
+
+curl http://127.0.0.1:8000/health
+
+Start the frontend in a second terminal:
+
+cd frontend
+npm install
+npm run dev
+Tech Stack
+Backend
+Python 3.11
+FastAPI
+SQLAlchemy
+PostgreSQL
+pgvector
+LangGraph
+Groq
+Pydantic
+Frontend
+React
+Vite
+React Markdown
+CSS
+Infrastructure
+Docker
+PostgreSQL
+pgvector
+Testing
+
+Run the complete test suite:
+
 python -m pytest -v
-```
-Current result: 19/19 tests passing, no live API key required.
 
-### Known Tradeoffs
-- Fact extraction uses Groq (fast, free-tier friendly) rather than OpenAI — logged here as a deliberate cost/latency choice, not an oversight.
-- (Add any other deviations here — chunking method, classifier approach, etc.)
+Current verified result:
 
-### Example Conflict
-`data/sample/conflict.txt` contains contradictory payment terms — Net 30 days vs Net 60 days. HyperDoc detects the conflict and creates a pending finding for human review.
+21 passed
+
+The test suite covers:
+
+Checkpoint roundtrip
+Chunk provenance
+Concurrent agent isolation
+Conflict detection
+Database connectivity
+Draft generation
+Embedding dimensions
+Fact persistence
+Finding persistence
+Agent graph execution
+TXT ingestion
+Kill/resume behavior
+LLM connectivity
+PDF parsing
+DOCX parsing
+Prompt injection handling
+Checkpoint resume
+Execution resume
+Agent runner
+Semantic search
+Example Conflict
+
+The sample conflict document contains:
+
+Payment Terms: Net 30 days.
+
+...
+
+Amendment
+
+Payment Terms: Net 60 days.
+
+HyperDoc extracts both values and identifies them as conflicting terms.
+
+The resulting finding is routed to the human review stage where the reviewer can accept or reject the finding.
+
+Design Tradeoffs
+Groq LLM
+
+Groq is used for fast inference and straightforward development.
+
+This was chosen as a cost and latency tradeoff rather than using a more expensive hosted model.
+
+Simple Fact Grouping
+
+Conflict detection currently groups extracted facts by normalized fact name and compares their distinct values.
+
+This keeps the conflict-detection layer deterministic and easy to inspect.
+
+Chunking
+
+Documents are split into bounded chunks with overlap while preserving page and section metadata where available.
+
+Human-in-the-Loop
+
+The system deliberately stops at the review stage rather than automatically resolving detected conflicts.
+
+This allows a human reviewer to make the final decision.
+
+Current Status
+
+HyperDoc currently supports the complete workflow:
+
+Upload
+  ↓
+Parse
+  ↓
+Chunk
+  ↓
+Extract Facts
+  ↓
+Detect Conflicts
+  ↓
+Generate Draft
+  ↓
+Human Review
+  ↓
+Accept / Reject
+
+The backend, agent pipeline, persistence layer, API, and React review interface are implemented and integrated.
+

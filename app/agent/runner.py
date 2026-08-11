@@ -5,13 +5,17 @@ from app.agent.graph import build_graph
 from app.db.database import SessionLocal
 
 
-def run_agent(document_ids: list[int]) -> dict:
+def run_agent(
+    document_ids: list[int],
+    rules: list[str] | None = None,
+) -> dict:
     db = SessionLocal()
     start_time = time.perf_counter()
 
     try:
         initial_state = {
             "document_ids": document_ids,
+            "rules": rules or [],
             "status": "pending",
             "stage_timings": {},
             "llm_usage": {

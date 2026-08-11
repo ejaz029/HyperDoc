@@ -2,7 +2,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -18,11 +18,20 @@ router = APIRouter(
 )
 
 UPLOAD_DIR = Path("data/uploads")
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+UPLOAD_DIR.mkdir(
+    parents=True,
+    exist_ok=True,
+)
 
 
 class AgentRunRequest(BaseModel):
-    document_ids: list[int]
+    document_ids: list[int] = Field(
+        min_length=1
+    )
+
+    rules: list[str] = Field(
+        default_factory=list
+    )
 
 
 @router.post("/upload")
@@ -30,16 +39,33 @@ async def upload_document(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ):
-    extension = Path(file.filename or "").suffix.lower()
+    extension = Path(
+        file.filename or ""
+    ).suffix.lower()
 
-    if extension not in {".pdf", ".docx", ".txt"}:
+    if extension not in {
+        ".pdf",
+        ".docx",
+        ".txt",
+    }:
         return {
-            "error": f"Unsupported file type: {extension}"
+            "error": (
+                f"Unsupported file type: "
+                f"{extension}"
+            )
         }
 
-    filename = file.filename or "document"
-    stored_name = f"{uuid4()}_{filename}"
-    file_path = UPLOAD_DIR / stored_name
+    filename = (
+        file.filename or "document"
+    )
+
+    stored_name = (
+        f"{uuid4()}_{filename}"
+    )
+
+    file_path = (
+        UPLOAD_DIR / stored_name
+    )
 
     content = await file.read()
     file_path.write_bytes(content)
@@ -63,17 +89,25 @@ def run_document_agent(
     request: AgentRunRequest,
     db: Session = Depends(get_db),
 ):
-    result = run_agent(request.document_ids)
+    result = run_agent(
+        document_ids=request.document_ids,
+        rules=request.rules,
+    )
 
     extracted_facts = list(
         db.scalars(
             select(ExtractedFactModel)
             .where(
                 ExtractedFactModel.id.in_(
-                    result.get("extracted_fact_ids", [])
+                    result.get(
+                        "extracted_fact_ids",
+                        [],
+                    )
                 )
             )
-            .order_by(ExtractedFactModel.id)
+            .order_by(
+                ExtractedFactModel.id
+            )
         )
     )
 
