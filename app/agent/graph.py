@@ -43,8 +43,64 @@ def ingest_node(state: AgentState) -> AgentState:
 
 
 def extract_node(state: AgentState) -> AgentState:
-    return checkpoint_node("extract", state)
+    from app.db.models import DocumentChunk
+    from app.services.extraction import (
+        extract_facts,
+        save_extracted_facts,
+    )
 
+    db = SessionLocal()
+
+    try:
+        document_ids = state.get("document_ids", [])
+        extracted_fact_ids = []
+
+        for document_id in document_ids:
+            chunks = (
+                db.query(DocumentChunk)
+                .filter(DocumentChunk.document_id == document_id)
+                .order_by(DocumentChunk.chunk_index)
+                .all()
+            )
+
+            for chunk in chunks:
+                result = extract_facts(
+                    document_id=document_id,
+                    chunk_id=chunk.id,
+                    content=chunk.content,
+                    page_number=chunk.page_number,
+                    section=chunk.section,
+                )
+
+                saved = save_extracted_facts(
+                    db,
+                    result,
+                )
+
+                extracted_fact_ids.extend(
+                    fact.id
+                    for fact in saved
+                )
+
+        updated = {
+            **state,
+            "current_stage": "extract",
+            "status": "completed",
+            "extracted_fact_ids": extracted_fact_ids,
+        }
+
+        save_checkpoint(
+            db,
+            state["run_id"],
+            updated,
+            stage="extract",
+            status="completed",
+        )
+
+        return updated
+
+    finally:
+        db.close()
 
 def conflict_check_node(state: AgentState) -> AgentState:
     from app.services.conflicts import find_conflicts

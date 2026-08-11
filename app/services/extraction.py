@@ -57,6 +57,13 @@ Every fact must be supported by the source text.
 
     return structured_llm.invoke(prompt)
 
+    for fact in result.facts:
+        fact.source.document_id = document_id
+        fact.source.chunk_id = chunk_id
+        fact.source.page_number = page_number
+        fact.source.section = section
+        
+    return result
 
 def save_extracted_facts(
     db: Session,
