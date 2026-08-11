@@ -233,12 +233,53 @@ def conflict_check_node(state: AgentState) -> AgentState:
 def draft_node(state: AgentState) -> AgentState:
     started_at = time.perf_counter()
 
-    return save_stage_checkpoint(
-        "draft",
-        state,
-        started_at,
-    )
+    from app.services.draft import build_draft
 
+    db = SessionLocal()
+
+    try:
+        document_ids = state.get("document_ids", [])
+
+        drafts = []
+
+        for document_id in document_ids:
+            drafts.append(
+                build_draft(
+                    db,
+                    document_id,
+                )
+            )
+
+        draft = "\n\n".join(drafts)
+
+        elapsed = round(
+            time.perf_counter() - started_at,
+            4,
+        )
+
+        updated = {
+            **state,
+            "current_stage": "draft",
+            "status": "completed",
+            "draft": draft,
+            "stage_timings": {
+                **state.get("stage_timings", {}),
+                "draft": elapsed,
+            },
+        }
+
+        save_checkpoint(
+            db,
+            state["run_id"],
+            updated,
+            stage="draft",
+            status="completed",
+        )
+
+        return updated
+
+    finally:
+        db.close()
 
 def review_node(state: AgentState) -> AgentState:
     started_at = time.perf_counter()

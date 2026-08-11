@@ -1,7 +1,7 @@
-Vendor Agreement
+﻿Vendor Agreement
 
 Vendor: Acme Supplies
-Contract Value: ,000
+Contract Value: $50,000
 Payment Terms: Net 30 days.
 
 The agreement is effective from January 1, 2026.
