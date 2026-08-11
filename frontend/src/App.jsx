@@ -34,52 +34,9 @@ function App() {
     }
   };
 
-  const uploadDocument = async () => {
-    if (!file) {
-      setError("Please select a document first.");
-      return;
-    }
-
-    setUploading(true);
-    setError("");
-    setMessage("");
-
-    try {
-      const formData = new FormData();
-      formData.append("file", file);
-
-      const response = await fetch(
-        `${API}/documents/upload`,
-        {
-          method: "POST",
-          body: formData,
-        }
-      );
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(
-          data.detail || data.error || "Upload failed"
-        );
-      }
-
-      setDocumentId(String(data.document_id));
-      setFile(null);
-      setMessage(
-        `Uploaded ${data.filename} successfully. Document ID: ${data.document_id}`
-      );
-
-      await loadFindingsForDocument(data.document_id);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setUploading(false);
-    }
-  };
-
   const loadFindingsForDocument = async (id) => {
     setLoading(true);
+    setError("");
 
     try {
       const response = await fetch(
@@ -95,6 +52,82 @@ function App() {
       setError(err.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const uploadDocument = async () => {
+    if (!file) {
+      setError("Please select a document first.");
+      return;
+    }
+
+    setUploading(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const uploadResponse = await fetch(
+        `${API}/documents/upload`,
+        {
+          method: "POST",
+          body: formData,
+        }
+      );
+
+      const uploadData = await uploadResponse.json();
+
+      if (!uploadResponse.ok) {
+        throw new Error(
+          uploadData.detail ||
+            uploadData.error ||
+            "Upload failed"
+        );
+      }
+
+      const id = uploadData.document_id;
+
+      setDocumentId(String(id));
+      setFile(null);
+
+      setMessage(
+        `Uploaded ${uploadData.filename}. Running document agent...`
+      );
+
+      const agentResponse = await fetch(
+        `${API}/documents/agent/run`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            document_ids: [id],
+          }),
+        }
+      );
+
+      const agentData = await agentResponse.json();
+
+      if (!agentResponse.ok) {
+        throw new Error(
+          agentData.detail ||
+            agentData.error ||
+            "Document agent failed"
+        );
+      }
+
+      setMessage(
+        `Analysis complete. ${agentData.finding_ids.length} finding(s) require review.`
+      );
+
+      await loadFindingsForDocument(id);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -133,10 +166,11 @@ function App() {
       </header>
 
       <main className="container">
-
         <section className="upload-panel">
           <h2>Upload Document</h2>
-          <p>Upload a PDF, DOCX, or TXT document for analysis.</p>
+          <p>
+            Upload a PDF, DOCX, or TXT document for analysis.
+          </p>
 
           <div className="upload-row">
             <input
@@ -152,7 +186,9 @@ function App() {
               onClick={uploadDocument}
               disabled={uploading}
             >
-              {uploading ? "Uploading..." : "Upload"}
+              {uploading
+                ? "Analyzing..."
+                : "Upload & Analyze"}
             </button>
           </div>
         </section>
@@ -201,7 +237,9 @@ function App() {
             </span>
           </div>
 
-          {loading && <p>Loading findings...</p>}
+          {loading && (
+            <p>Loading findings...</p>
+          )}
 
           {error && (
             <p className="error">
@@ -235,7 +273,9 @@ function App() {
                   </span>
                 </div>
 
-                <h3>{finding.description}</h3>
+                <h3>
+                  {finding.description}
+                </h3>
 
                 <p className="finding-id">
                   Finding #{finding.id}
