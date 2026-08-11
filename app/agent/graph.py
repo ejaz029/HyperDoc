@@ -54,6 +54,7 @@ def extract_node(state: AgentState) -> AgentState:
     try:
         document_ids = state.get("document_ids", [])
         extracted_fact_ids = []
+        attempts = state.get("extraction_attempts", 0) + 1
 
         for document_id in document_ids:
             chunks = (
@@ -87,6 +88,7 @@ def extract_node(state: AgentState) -> AgentState:
             "current_stage": "extract",
             "status": "completed",
             "extracted_fact_ids": extracted_fact_ids,
+            "extraction_attempts": attempts,
         }
 
         save_checkpoint(
@@ -101,6 +103,18 @@ def extract_node(state: AgentState) -> AgentState:
 
     finally:
         db.close()
+
+def route_after_extract(state: AgentState):
+    fact_ids = state.get("extracted_fact_ids", [])
+    attempts = state.get("extraction_attempts", 0)
+
+    if fact_ids:
+        return "conflict_check"
+
+    if attempts < 2:
+        return "retry_extract"
+
+    return "escalate_review"
 
 def conflict_check_node(state: AgentState) -> AgentState:
     from app.services.conflicts import find_conflicts
@@ -218,7 +232,15 @@ def build_graph():
     )
 
     graph.add_edge("ingest", "extract")
-    graph.add_edge("extract", "conflict_check")
+    graph.add_conditional_edges(
+    "extract",
+    route_after_extract,
+    {
+        "conflict_check": "conflict_check",
+        "retry_extract": "extract",
+        "escalate_review": "review",
+    },
+    )
     graph.add_edge("conflict_check", "draft")
     graph.add_edge("draft", "review")
     graph.add_edge("review", END)

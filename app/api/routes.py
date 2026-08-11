@@ -2,15 +2,22 @@ from pathlib import Path
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, UploadFile
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.agent.runner import run_agent
 from app.db.database import get_db
 from app.ingestion.service import ingest_document
+
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
 UPLOAD_DIR = Path("data/uploads")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+
+class AgentRunRequest(BaseModel):
+    document_ids: list[int]
 
 
 @router.post("/upload")
@@ -42,3 +49,8 @@ async def upload_document(
         "document_type": document.document_type,
         "chunks": len(document.chunks),
     }
+
+
+@router.post("/agent/run")
+def run_document_agent(request: AgentRunRequest):
+    return run_agent(request.document_ids)
